@@ -21,7 +21,7 @@ uv sync
 2. Run the required unit tests:
 
 ``` sh
-uv run pytest tests/test_grpo.py
+env -u LD_LIBRARY_PATH uv run pytest tests/test_grpo.py
 ```
 
 Initially, all tests should fail with `NotImplementedError`s.
