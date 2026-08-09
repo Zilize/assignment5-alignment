@@ -49,19 +49,24 @@ def grpo_train_step(
         labels_micro_batch = labels[i: i + micro_batch_size]
         mask_micro_batch = response_mask[i: i + micro_batch_size]
         rewards_micro_batch = rollout_rewards[i: i + micro_batch_size].unsqueeze(1)
+        old_log_probs_micro_batch = old_log_probs[i: i + micro_batch_size]
 
         get_result = get_response_log_probs(model, inputs_micro_batch, labels_micro_batch)
         log_probs = get_result["log_probs"]  # (micro_batch_size, seq_len)
 
         per_token_loss, _ = compute_policy_gradient_loss(rewards_micro_batch, log_probs, importance_reweighting_method,
-                                                         old_log_probs, cliprange, mask_micro_batch)
+                                                         old_log_probs_micro_batch, cliprange, mask_micro_batch)
         loss = aggregate_loss_across_microbatch(per_token_loss, mask_micro_batch, loss_normalization,
                                                 normalization_constant)
 
-        loss = loss * len(inputs_micro_batch) / len(repeated_prompts)
+        if loss_normalization == "sequence":
+            loss = loss * len(inputs_micro_batch) / len(repeated_prompts)
+            total_loss += loss.detach()
+        elif loss_normalization == "constant":
+            total_loss += loss.detach()
+        else:
+             raise NotImplementedError
         loss.backward()
-
-        total_loss += loss.detach()
 
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
     optimizer.step()

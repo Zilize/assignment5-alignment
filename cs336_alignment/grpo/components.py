@@ -31,16 +31,23 @@ def compute_group_normalized_rewards(
     advantage_normalizer: Literal["std", "none", "mean"] = "std",
 ) -> tuple[torch.Tensor, dict[str, float]]:
     rollout_batch_size = raw_rewards.shape[0]
-    rewards = raw_rewards.reshape(rollout_batch_size // group_size, group_size)
+    reshaped_raw_rewards = raw_rewards.reshape(rollout_batch_size // group_size, group_size)
     if baseline == "mean":
-        mean_rewards = rewards.mean(dim=-1, keepdim=True)
-        rewards = rewards - mean_rewards
+        mean_rewards = reshaped_raw_rewards.mean(dim=-1, keepdim=True)
+        shifted_rewards = reshaped_raw_rewards - mean_rewards
+    elif baseline == "none":
+        shifted_rewards = reshaped_raw_rewards
     else:
         raise NotImplementedError
 
     if advantage_normalizer == "std":
-        std_rewards = rewards.std(dim=-1, keepdim=True) + advantage_eps
-        rewards = rewards / std_rewards
+        std_rewards = reshaped_raw_rewards.std(dim=-1, keepdim=True) + advantage_eps
+        rewards = shifted_rewards / std_rewards
+    elif advantage_normalizer == "none":
+        rewards = shifted_rewards
+    elif advantage_normalizer == "mean":
+        mean_rewards = reshaped_raw_rewards.mean(dim=-1, keepdim=True) + advantage_eps
+        rewards = shifted_rewards / mean_rewards
     else:
         raise NotImplementedError
     return rewards.reshape(rollout_batch_size), {
@@ -76,8 +83,10 @@ def aggregate_loss_across_microbatch(
     response_length = mask.sum(dim=-1)
     response_loss = per_token_policy_gradient_loss.masked_fill(~mask, 0).sum(dim=-1)
     if loss_normalization == "sequence":
-        response_loss = response_loss / response_length
+        response_loss = (response_loss / response_length).mean()  # .mean() -> */mBG, mB: microBatch
+    elif loss_normalization == "constant":
+        response_loss = response_loss.sum() / normalization_constant  # assert const == BGL
     else:
         raise NotImplementedError
 
-    return response_loss.mean()
+    return response_loss
