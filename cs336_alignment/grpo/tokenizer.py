@@ -32,13 +32,13 @@ def tokenize_prompt_and_output(
     # build mask for labels
     response_mask = []
     for prompt_token, output_token in zip(prompt_tokens, output_tokens):
-        prefix = [0] * (len(prompt_token) - 1)
-        middle = [1] * len(output_token)
-        suffix = [0] * (max_prompt_and_output_len - 1 - len(prefix) - len(middle))
+        prefix = [False] * (len(prompt_token) - 1)
+        middle = [True] * len(output_token)
+        suffix = [False] * (max_prompt_and_output_len - 1 - len(prefix) - len(middle))
         response_mask.append(prefix + middle + suffix)
-    response_mask = torch.tensor(response_mask, dtype=torch.long)
+    response_mask = torch.tensor(response_mask, dtype=torch.bool)
 
-    padded_merged_tokens = [merged_token + [0] * (max_prompt_and_output_len - len(merged_token))
+    padded_merged_tokens = [merged_token + [tokenizer.pad_token_id] * (max_prompt_and_output_len - len(merged_token))
                             for merged_token in merged_tokens]
     padded_merged_tokens = torch.tensor(padded_merged_tokens, dtype=torch.long)
 
