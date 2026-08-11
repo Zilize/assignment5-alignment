@@ -5,7 +5,6 @@ import random
 import argparse
 
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from cs336_alignment.drgrpo_grader import question_only_reward_fn, r1_zero_reward_fn
 from cs336_alignment.grpo.components import compute_rollout_rewards
