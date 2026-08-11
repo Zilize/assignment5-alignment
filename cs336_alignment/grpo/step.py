@@ -84,11 +84,12 @@ def grpo_train_step(
         if pbar is not None:
             pbar.update(1)
 
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
+    gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm).item()
     optimizer.step()
     optimizer.zero_grad()
 
     return total_loss, {
+        "gradient_norm": gradient_norm,
         "mean_reward": reward_stats["mean_reward"],
         "mean_format_reward": reward_stats["mean_format_reward"],
         "mean_answer_reward": reward_stats["mean_answer_reward"],

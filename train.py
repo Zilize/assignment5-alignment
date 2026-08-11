@@ -113,6 +113,7 @@ def train(args):
     run = wandb.init(
         entity='zilize',
         project='grpo',
+        name=args.exp_name,
         config=dict(vars(args))
     )
 
@@ -212,6 +213,7 @@ def train(args):
         )
         run.log({
             "train/loss": loss.item(),
+            "train/gradient_norm": train_stats["gradient_norm"],
             "train/mean_reward": train_stats["mean_reward"],
             "train/mean_format_reward": train_stats["mean_format_reward"],
             "train/mean_answer_reward": train_stats["mean_answer_reward"],
@@ -223,6 +225,7 @@ def train(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--exp_name', type=str, required=True)
     parser.add_argument('--policy_device', type=int, default=0)
     parser.add_argument('--rollout_device', type=int, default=1)
 
