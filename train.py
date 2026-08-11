@@ -177,7 +177,6 @@ def train(args):
                 "valid/mean_rollout_length": valid_stats["mean_rollout_length"],
             }
             if valid_samples:
-                # wandb 的 Table 一旦上报便不可变，因此每次都用累积的历史行重建一张新表
                 sample_rows.extend([[rollout_step] + [sample[column] for column in sample_columns[1:]]
                                     for sample in valid_samples])
                 valid_logs["valid/samples"] = wandb.Table(columns=sample_columns, data=sample_rows)
