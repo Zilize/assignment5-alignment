@@ -11,18 +11,19 @@ from cs336_alignment.drgrpo_grader import question_only_reward_fn, r1_zero_rewar
 from cs336_alignment.grpo.components import compute_rollout_rewards
 from cs336_alignment.grpo.step import grpo_train_step
 from cs336_alignment.vllm_utils import VLLMServer
+from cs336_alignment.checkpoint import get_model_and_tokenizer
 
 
 def fetch_prompt_and_reward_fn(prompt_type):
     assert prompt_type in ["question_only", "zero_shot", "three_shot"]
     if prompt_type == "question_only":
-        prompt = open('cs336_alignment/prompts/question_only.prompt', 'r').read()
+        prompt = open('cs336_alignment/prompts/question_only.prompt', 'r').read().strip()
         reward_fn = question_only_reward_fn
     elif prompt_type == "zero_shot":
-        prompt = open('cs336_alignment/prompts/r1_zero.prompt', 'r').read()
+        prompt = open('cs336_alignment/prompts/r1_zero.prompt', 'r').read().strip()
         reward_fn = r1_zero_reward_fn
     else:
-        prompt = open('cs336_alignment/prompts/r1_zero_three_shot_gsm8k.prompt', 'r').read()
+        prompt = open('cs336_alignment/prompts/r1_zero_three_shot_gsm8k.prompt', 'r').read().strip()
         reward_fn = r1_zero_reward_fn
     return prompt, reward_fn
 
@@ -58,24 +59,24 @@ def data_sampler(data, prompt, batch_size):
         random.shuffle(data)
         questions, ground_truths = [], []
         for data_item in data:
-            questions.append(prompt.replace('{question}', data_item["question"]))
+            questions.append(prompt.format(question=data_item["question"]))
             ground_truths.append(data_item["answer"].split("####")[1].strip())
             if len(questions) == batch_size:
                 yield questions, ground_truths
                 questions, ground_truths = [], []
 
 
-def validate_model(server, sampling_params, tokenizer, reward_fn, valid_sampler, valid_step):
+def validate_model(server, sampling_params, reward_fn, valid_sampler, valid_step, num_logged_samples=0):
     count, total_reward, total_format_reward, total_answer_reward = 0, 0.0, 0.0, 0.0
     total_rollout_length = 0
+    candidates = []
     for _ in range(valid_step):
         questions, ground_truths = next(valid_sampler)
 
         completions = server.generate_completions(questions, sampling_params)
         rollout_responses = [completion.text for completion in completions]
-
-        rollout_tokens = tokenizer(rollout_responses)['input_ids']
-        total_rollout_length += sum(len(rollout_token) for rollout_token in rollout_tokens)
+        rollout_lengths = [len(completion.token_ids) for completion in completions]
+        total_rollout_length += sum(rollout_lengths)
 
         _, stats = compute_rollout_rewards(reward_fn, rollout_responses, ground_truths)
 
@@ -84,12 +85,29 @@ def validate_model(server, sampling_params, tokenizer, reward_fn, valid_sampler,
         total_format_reward += stats["mean_format_reward"] * len(rollout_responses)
         total_answer_reward += stats["mean_answer_reward"] * len(rollout_responses)
 
+        if num_logged_samples > 0:
+            candidates.extend(zip(questions, ground_truths, rollout_responses, rollout_lengths))
+
+    samples = []
+    for question, ground_truth, response, length in random.sample(candidates, min(num_logged_samples,
+                                                                                  len(candidates))):
+        reward = reward_fn(response, ground_truth)
+        samples.append({
+            "question": question,
+            "ground_truth": ground_truth,
+            "response": response,
+            "length": length,
+            "reward": reward["reward"],
+            "format_reward": reward["format_reward"],
+            "answer_reward": reward["answer_reward"],
+        })
+
     return {
         "mean_reward": total_reward / count,
         "mean_format_reward": total_format_reward / count,
         "mean_answer_reward": total_answer_reward / count,
         "mean_rollout_length": total_rollout_length / count
-    }
+    }, samples
 
 
 def train(args):
@@ -103,12 +121,13 @@ def train(args):
     train_data = fetch_data(args.train_data, args.n_train_examples)
     valid_data = fetch_data(args.valid_data, args.n_val_examples)
 
+    assert args.rollout_batch_size % args.group_size == 0
     prompt_batch_size = args.rollout_batch_size // args.group_size
     train_sampler = data_sampler(train_data, prompt, prompt_batch_size)
-    valid_sampler = data_sampler(valid_data, prompt, prompt_batch_size)
+    valid_sampler = data_sampler(valid_data, prompt, args.valid_batch_size)
 
-    model = AutoModelForCausalLM.from_pretrained(args.model, dtype=torch.bfloat16).to(f'cuda:{args.policy_device}')
-    tokenizer = AutoTokenizer.from_pretrained(args.model)
+    model, tokenizer = get_model_and_tokenizer(args.model, f'cuda:{args.policy_device}')
+    model.eval()  # 确保log-prob和vllm推理时计算方式一致，避免dropout影响
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, betas=(args.beta_1, args.beta_2),
                                   weight_decay=args.weight_decay)
 
@@ -136,6 +155,10 @@ def train(args):
     }
     method_config = fetch_method_config(args.method)
 
+    sample_columns = ["step", "question", "ground_truth", "response", "length",
+                      "reward", "format_reward", "answer_reward"]
+    sample_rows = []
+
     # training loop
     pbar = tqdm(total=args.num_rollout_steps * args.gradient_accumulation_steps)
     for rollout_step in range(args.num_rollout_steps):
@@ -143,14 +166,22 @@ def train(args):
 
         # validation
         if rollout_step % args.validation_intervals == 0:
-            valid_stats = validate_model(server, valid_sampling_params, tokenizer, reward_fn, valid_sampler,
-                                         args.n_val_examples // args.valid_batch_size)
-            run.log({
+            assert args.n_val_examples % args.valid_batch_size == 0
+            valid_stats, valid_samples = validate_model(server, valid_sampling_params, reward_fn, valid_sampler,
+                                                        args.n_val_examples // args.valid_batch_size,
+                                                        args.n_logged_samples)
+            valid_logs = {
                 "valid/mean_reward": valid_stats["mean_reward"],
                 "valid/mean_format_reward": valid_stats["mean_format_reward"],
                 "valid/mean_answer_reward": valid_stats["mean_answer_reward"],
                 "valid/mean_rollout_length": valid_stats["mean_rollout_length"],
-            }, step=rollout_step)
+            }
+            if valid_samples:
+                # wandb 的 Table 一旦上报便不可变，因此每次都用累积的历史行重建一张新表
+                sample_rows.extend([[rollout_step] + [sample[column] for column in sample_columns[1:]]
+                                    for sample in valid_samples])
+                valid_logs["valid/samples"] = wandb.Table(columns=sample_columns, data=sample_rows)
+            run.log(valid_logs, step=rollout_step)
 
         questions, ground_truths = next(train_sampler)
         repeated_prompts = [question for question in questions for _ in range(args.group_size)]
@@ -205,6 +236,7 @@ if __name__ == '__main__':
     parser.add_argument('--valid_data', type=str, default='data/gsm8k/test.jsonl')
     parser.add_argument('--n_train_examples', type=int, default=6400)
     parser.add_argument('--n_val_examples', type=int, default=1024)
+    parser.add_argument('--n_logged_samples', type=int, default=8)
 
     parser.add_argument('--sampling_temperature', type=float, default=1.0)
     parser.add_argument('--sampling_max_tokens', type=int, default=512)
