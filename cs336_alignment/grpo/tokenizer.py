@@ -19,8 +19,10 @@ def get_tokenizer(model_id_or_dir: str):
 def tokenize_prompt_and_output(
     prompt_strs: list[str],
     output_strs: list[str],
-    tokenizer: PreTrainedTokenizerBase
+    tokenizer: PreTrainedTokenizerBase,
+    device = None,
 ) -> dict[str, torch.Tensor]:
+    assert len(prompt_strs) == len(output_strs)
     prompt_tokens = tokenizer(prompt_strs)['input_ids']
     output_tokens = tokenizer(output_strs)['input_ids']
 
@@ -36,11 +38,11 @@ def tokenize_prompt_and_output(
         middle = [True] * len(output_token)
         suffix = [False] * (max_prompt_and_output_len - 1 - len(prefix) - len(middle))
         response_mask.append(prefix + middle + suffix)
-    response_mask = torch.tensor(response_mask, dtype=torch.bool)
+    response_mask = torch.tensor(response_mask, dtype=torch.bool, device=device)
 
     padded_merged_tokens = [merged_token + [tokenizer.pad_token_id] * (max_prompt_and_output_len - len(merged_token))
                             for merged_token in merged_tokens]
-    padded_merged_tokens = torch.tensor(padded_merged_tokens, dtype=torch.long)
+    padded_merged_tokens = torch.tensor(padded_merged_tokens, dtype=torch.long, device=device)
 
     truncated_merged_tokens = padded_merged_tokens[:, :-1]
     shifted_merged_tokens = padded_merged_tokens[:, 1:]
@@ -56,13 +58,14 @@ def get_response_log_probs(
     input_ids: torch.Tensor,
     labels: torch.Tensor,
     return_token_entropy: bool = False,
+    device = None,
 ) -> dict[str, torch.Tensor]:
     logits = model(input_ids).logits
     log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
     batch_size, seq_len, vocab_size = log_probs.shape
 
-    batch_indices = torch.tensor(range(batch_size), dtype=torch.long).repeat_interleave(seq_len).reshape(batch_size, seq_len)
-    seq_indices = torch.tensor(range(seq_len), dtype=torch.long).repeat(batch_size).reshape(batch_size, seq_len)
+    batch_indices = torch.tensor(range(batch_size), dtype=torch.long, device=device).repeat_interleave(seq_len).reshape(batch_size, seq_len)
+    seq_indices = torch.tensor(range(seq_len), dtype=torch.long, device=device).repeat(batch_size).reshape(batch_size, seq_len)
 
     result = {"log_probs": log_probs[batch_indices, seq_indices, labels]}
     if return_token_entropy:

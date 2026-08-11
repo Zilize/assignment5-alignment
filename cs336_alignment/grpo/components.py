@@ -6,6 +6,7 @@ def compute_rollout_rewards(
     reward_fn: Callable[[str, str], dict[str, float]],
     rollout_responses: list[str],
     repeated_ground_truths: list[str],
+    device = None,
 ) -> tuple[torch.Tensor, dict[str, float]]:
     total_reward, total_format_reward, total_answer_reward = 0, 0, 0
     rewards = []
@@ -16,7 +17,7 @@ def compute_rollout_rewards(
         total_format_reward += reward["format_reward"]
         total_answer_reward += reward["answer_reward"]
 
-    return torch.tensor(rewards, dtype=torch.float), {
+    return torch.tensor(rewards, dtype=torch.float, device=device), {
         "mean_reward": total_reward / len(rollout_responses),
         "mean_format_reward": total_format_reward / len(rollout_responses),
         "mean_answer_reward": total_answer_reward / len(rollout_responses),

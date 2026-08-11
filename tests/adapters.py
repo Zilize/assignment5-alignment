@@ -12,7 +12,7 @@ from transformers import PreTrainedTokenizerBase
 from cs336_alignment.grpo.tokenizer import tokenize_prompt_and_output, get_response_log_probs
 from cs336_alignment.grpo.components import (compute_rollout_rewards, compute_group_normalized_rewards,
                                              compute_policy_gradient_loss, aggregate_loss_across_microbatch)
-from cs336_alignment.grpo.train import grpo_train_step
+from cs336_alignment.grpo.step import grpo_train_step
 
 
 def run_tokenize_prompt_and_output(
