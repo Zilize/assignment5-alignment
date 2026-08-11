@@ -131,7 +131,7 @@ def train(args):
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, betas=(args.beta_1, args.beta_2),
                                   weight_decay=args.weight_decay)
 
-    server = VLLMServer(model_id=args.model, gpu=args.rollout_device, seed=args.sampling_seed,
+    server = VLLMServer(model_id=args.model, port=args.vllm_port, gpu=args.rollout_device, seed=args.sampling_seed,
                         gpu_memory_utilization=0.9)
     server.start()
     server.init_weight_sync(policy_device=args.policy_device)
@@ -228,6 +228,7 @@ if __name__ == '__main__':
     parser.add_argument('--exp_name', type=str, required=True)
     parser.add_argument('--policy_device', type=int, default=0)
     parser.add_argument('--rollout_device', type=int, default=1)
+    parser.add_argument('--vllm_port', type=int, default=None)
 
     parser.add_argument('--model', type=str, default='../model')
     parser.add_argument('--prompt', type=str, default='zero_shot')
@@ -255,4 +256,9 @@ if __name__ == '__main__':
     parser.add_argument('--weight_decay', type=float, default=0.0)
     parser.add_argument('--beta_1', type=float, default=0.9)
     parser.add_argument('--beta_2', type=float, default=0.95)
-    train(parser.parse_args())
+
+    args = parser.parse_args()
+    if args.vllm_port is None:
+        # 端口按 rollout GPU 区分，否则多组实验会抢同一个 server 并互相 pkill
+        args.vllm_port = 8000 + args.rollout_device
+    train(args)
