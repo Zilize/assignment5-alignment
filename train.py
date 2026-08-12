@@ -289,7 +289,7 @@ if __name__ == '__main__':
     parser.add_argument('--valid_batch_size', type=int, default=1024)
     parser.add_argument('--gradient_accumulation_steps', type=int, default=16)
 
-    parser.add_argument('--learning_rate', type=float, default=1e-5)
+    parser.add_argument('--learning_rate', type=float, default=2e-5)
     parser.add_argument('--max_grad_norm', type=float, default=1.0)
     parser.add_argument('--weight_decay', type=float, default=0.0)
     parser.add_argument('--beta_1', type=float, default=0.9)
