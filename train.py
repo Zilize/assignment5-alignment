@@ -244,7 +244,7 @@ def train(args):
             old_log_probs=None,
             cliprange=method_config["cliprange"],
             loss_normalization=method_config["loss_normalization"],
-            normalization_constant=args.rollout_batch_size * args.sampling_max_token,
+            normalization_constant=args.rollout_batch_size * args.sampling_max_tokens,
             pbar=pbar,
             device=model_device,
         )
