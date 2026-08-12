@@ -140,6 +140,7 @@ def train(args):
     train_sampling_params = {
         "temperature": args.sampling_temperature,
         "max_tokens": args.sampling_max_tokens,
+        "min_tokens": args.sampling_min_tokens,
         "n": args.group_size,
         "seed": args.sampling_seed,
         "stop": ["</answer>"],
@@ -148,6 +149,7 @@ def train(args):
     valid_sampling_params = {
         "temperature": args.sampling_temperature,
         "max_tokens": args.sampling_max_tokens,
+        "min_tokens": args.sampling_min_tokens,
         "n": 1,
         "seed": args.sampling_seed,
         "stop": ["</answer>"],
@@ -242,6 +244,7 @@ if __name__ == '__main__':
 
     parser.add_argument('--sampling_temperature', type=float, default=1.0)
     parser.add_argument('--sampling_max_tokens', type=int, default=512)
+    parser.add_argument('--sampling_min_tokens', type=int, default=1)
     parser.add_argument('--sampling_seed', type=int, default=42)
 
     parser.add_argument('--num_rollout_steps', type=int, default=200)

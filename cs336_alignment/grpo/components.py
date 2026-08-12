@@ -84,7 +84,8 @@ def aggregate_loss_across_microbatch(
     response_length = mask.sum(dim=-1)
     response_loss = per_token_policy_gradient_loss.masked_fill(~mask, 0).sum(dim=-1)
     if loss_normalization == "sequence":
-        response_loss = (response_loss / response_length).mean()  # .mean() -> */mBG, mB: microBatch
+        # 空 response 的 loss 恒为 0，clamp 只是避免 0/0 把整个 batch 变成 nan
+        response_loss = (response_loss / response_length.clamp(min=1)).mean()  # .mean() -> */mBG, mB: microBatch
     elif loss_normalization == "constant":
         response_loss = response_loss.sum() / normalization_constant  # assert const == BGL
     else:

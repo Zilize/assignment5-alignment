@@ -93,5 +93,5 @@ def grpo_train_step(
         "mean_reward": reward_stats["mean_reward"],
         "mean_format_reward": reward_stats["mean_format_reward"],
         "mean_answer_reward": reward_stats["mean_answer_reward"],
-        "mean_token_entropy": sum_token_entropy / count_token_entropy,
+        "mean_token_entropy": sum_token_entropy / max(count_token_entropy, 1),
     }
