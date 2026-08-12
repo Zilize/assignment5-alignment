@@ -47,7 +47,42 @@ def fetch_method_config(method):
             "importance_reweighting_method": "none",
             "cliprange": None,
             "loss_normalization": "sequence",
-            "normalization_constant": None
+        }
+    elif method == "grpo_constant":
+        return {
+            "baseline": "mean",
+            "advantage_eps": 1e-6,
+            "advantage_normalizer": "std",
+            "importance_reweighting_method": "none",
+            "cliprange": None,
+            "loss_normalization": "constant",
+        }
+    elif method == "dr_grpo":
+        return {
+            "baseline": "mean",
+            "advantage_eps": 1e-6,
+            "advantage_normalizer": "none",
+            "importance_reweighting_method": "none",
+            "cliprange": None,
+            "loss_normalization": "constant",
+        }
+    elif method == "rft":
+        return {
+            "baseline": "none",
+            "advantage_eps": 1e-6,
+            "advantage_normalizer": "none",
+            "importance_reweighting_method": "none",
+            "cliprange": None,
+            "loss_normalization": "constant",
+        }
+    elif method == "maxrl":
+        return {
+            "baseline": "mean",
+            "advantage_eps": 1e-6,
+            "advantage_normalizer": "mean",
+            "importance_reweighting_method": "none",
+            "cliprange": None,
+            "loss_normalization": "constant",
         }
     else:
         raise NotImplementedError
@@ -209,7 +244,7 @@ def train(args):
             old_log_probs=None,
             cliprange=method_config["cliprange"],
             loss_normalization=method_config["loss_normalization"],
-            normalization_constant=method_config["normalization_constant"],
+            normalization_constant=args.rollout_batch_size * args.sampling_max_token,
             pbar=pbar,
             device=model_device,
         )
