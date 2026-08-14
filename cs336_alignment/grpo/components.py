@@ -67,12 +67,29 @@ def compute_policy_gradient_loss(
     cliprange: float | None = None,
     response_mask: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
-    per_token_loss = -raw_rewards_or_advantages * policy_log_probs
     if importance_reweighting_method == "none":
-        pass
+        per_token_loss = -raw_rewards_or_advantages * policy_log_probs
+        return per_token_loss, {}
+    elif importance_reweighting_method == "noclip":
+        # A * w = A * prob / prob_old = A * exp(log_prob - log_prob_old)
+        w = torch.exp(policy_log_probs - old_log_probs)
+        per_token_loss = -raw_rewards_or_advantages * w
+        return per_token_loss, {}
+    elif importance_reweighting_method == "grpo":
+        w = torch.exp(policy_log_probs - old_log_probs)
+        clipped_w = torch.clip(w, 1 - cliprange, 1 + cliprange)
+        per_token_loss = -torch.min(raw_rewards_or_advantages * w, raw_rewards_or_advantages * clipped_w)
+        return per_token_loss, {}
+    elif importance_reweighting_method == "gspo":
+        response_length = response_mask.sum(dim=-1, keepdim=True)
+        w = torch.exp(policy_log_probs - old_log_probs)
+        s = w.masked_fill(~response_mask, 1.0).prod(dim=-1, keepdim=True).expand_as(w)
+        s = torch.pow(s, 1.0 / response_length)
+        clipped_s = torch.clip(s, 1 - cliprange, 1 + cliprange)
+        per_token_loss = -torch.min(raw_rewards_or_advantages * s, raw_rewards_or_advantages * clipped_s)
+        return per_token_loss, {}
     else:
         raise NotImplementedError
-    return per_token_loss, {}
 
 
 def aggregate_loss_across_microbatch(
