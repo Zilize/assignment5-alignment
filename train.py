@@ -9,6 +9,7 @@ from tqdm import tqdm
 from cs336_alignment.drgrpo_grader import question_only_reward_fn, r1_zero_reward_fn
 from cs336_alignment.grpo.components import compute_rollout_rewards
 from cs336_alignment.grpo.step import grpo_train_step
+from cs336_alignment.grpo.tokenizer import get_response_log_probs, tokenize_prompt_and_output
 from cs336_alignment.vllm_utils import VLLMServer
 from cs336_alignment.checkpoint import get_model_and_tokenizer
 
@@ -83,6 +84,42 @@ def fetch_method_config(method):
             "importance_reweighting_method": "none",
             "cliprange": None,
             "loss_normalization": "constant",
+        }
+    elif method == "off_policy_naive":
+        return {
+            "baseline": "mean",
+            "advantage_eps": 1e-6,
+            "advantage_normalizer": "std",
+            "importance_reweighting_method": "none",
+            "cliprange": None,
+            "loss_normalization": "sequence",
+        }
+    elif method == "off_policy_noclip":
+        return {
+            "baseline": "mean",
+            "advantage_eps": 1e-6,
+            "advantage_normalizer": "std",
+            "importance_reweighting_method": "noclip",
+            "cliprange": None,
+            "loss_normalization": "sequence",
+        }
+    elif method == "off_policy_grpo":
+        return {
+            "baseline": "mean",
+            "advantage_eps": 1e-6,
+            "advantage_normalizer": "std",
+            "importance_reweighting_method": "grpo",
+            "cliprange": 0.2,
+            "loss_normalization": "sequence",
+        }
+    elif method == "off_policy_gspo":
+        return {
+            "baseline": "mean",
+            "advantage_eps": 1e-6,
+            "advantage_normalizer": "std",
+            "importance_reweighting_method": "gspo",
+            "cliprange": 3e-4,
+            "loss_normalization": "sequence",
         }
     else:
         raise NotImplementedError
@@ -191,19 +228,28 @@ def train(args):
         "include_stop_str_in_output": True
     }
     method_config = fetch_method_config(args.method)
+    off_policy = True if args.method in ["off_policy_naive", "off_policy_noclip", "off_policy_grpo",
+                                         "off_policy_gspo"] else False
 
     sample_columns = ["step", "question", "ground_truth", "response", "length",
                       "reward", "format_reward", "answer_reward"]
     sample_rows = []
 
     # training loop
-    pbar = tqdm(total=args.num_rollout_steps * args.gradient_accumulation_steps)
+    if off_policy:
+        total_steps = args.num_rollout_steps * (args.rollout_batch_size // args.train_batch_size) * args.gradient_accumulation_steps
+    else:
+        total_steps = args.num_rollout_steps * args.gradient_accumulation_steps
+    pbar = tqdm(total=total_steps)
+
     for rollout_step in range(args.num_rollout_steps):
         server.sync_policy_weights(model)
 
         # validation
         if rollout_step % args.validation_intervals == 0:
             assert args.n_val_examples % args.valid_batch_size == 0
+
+            valid_step = rollout_step if not off_policy else rollout_step * (args.rollout_batch_size // args.train_batch_size)
             valid_stats, valid_samples = validate_model(server, valid_sampling_params, reward_fn, valid_sampler,
                                                         args.n_val_examples // args.valid_batch_size,
                                                         args.n_logged_samples)
@@ -214,10 +260,10 @@ def train(args):
                 "valid/mean_rollout_length": valid_stats["mean_rollout_length"],
             }
             if valid_samples:
-                sample_rows.extend([[rollout_step] + [sample[column] for column in sample_columns[1:]]
+                sample_rows.extend([[valid_step] + [sample[column] for column in sample_columns[1:]]
                                     for sample in valid_samples])
                 valid_logs["valid/samples"] = wandb.Table(columns=sample_columns, data=sample_rows)
-            run.log(valid_logs, step=rollout_step)
+            run.log(valid_logs, step=valid_step)
 
         questions, ground_truths = next(train_sampler)
         repeated_prompts = [question for question in questions for _ in range(args.group_size)]
@@ -226,36 +272,83 @@ def train(args):
         completions = server.generate_completions(questions, train_sampling_params)
         rollout_responses = [completion.text for completion in completions]
 
-        loss, train_stats = grpo_train_step(
-            model=model,
-            tokenizer=tokenizer,
-            optimizer=optimizer,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-            max_grad_norm=args.max_grad_norm,
-            reward_fn=reward_fn,
-            repeated_prompts=repeated_prompts,
-            rollout_responses=rollout_responses,
-            repeated_ground_truths=repeated_ground_truths,
-            group_size=args.group_size,
-            baseline=method_config["baseline"],
-            advantage_eps=method_config["advantage_eps"],
-            advantage_normalizer=method_config["advantage_normalizer"],
-            importance_reweighting_method=method_config["importance_reweighting_method"],
-            old_log_probs=None,
-            cliprange=method_config["cliprange"],
-            loss_normalization=method_config["loss_normalization"],
-            normalization_constant=args.rollout_batch_size * args.sampling_max_tokens,
-            pbar=pbar,
-            device=model_device,
-        )
-        run.log({
-            "train/loss": loss.item(),
-            "train/gradient_norm": train_stats["gradient_norm"],
-            "train/mean_reward": train_stats["mean_reward"],
-            "train/mean_format_reward": train_stats["mean_format_reward"],
-            "train/mean_answer_reward": train_stats["mean_answer_reward"],
-            "train/mean_token_entropy": train_stats["mean_token_entropy"],
-        }, step=rollout_step)
+        if not off_policy:
+            loss, train_stats = grpo_train_step(
+                model=model,
+                tokenizer=tokenizer,
+                optimizer=optimizer,
+                gradient_accumulation_steps=args.gradient_accumulation_steps,
+                max_grad_norm=args.max_grad_norm,
+                reward_fn=reward_fn,
+                repeated_prompts=repeated_prompts,
+                rollout_responses=rollout_responses,
+                repeated_ground_truths=repeated_ground_truths,
+                group_size=args.group_size,
+                baseline=method_config["baseline"],
+                advantage_eps=method_config["advantage_eps"],
+                advantage_normalizer=method_config["advantage_normalizer"],
+                importance_reweighting_method=method_config["importance_reweighting_method"],
+                old_log_probs=None,
+                cliprange=method_config["cliprange"],
+                loss_normalization=method_config["loss_normalization"],
+                normalization_constant=args.rollout_batch_size * args.sampling_max_tokens,
+                pbar=pbar,
+                device=model_device,
+            )
+            run.log({
+                "train/loss": loss.item(),
+                "train/gradient_norm": train_stats["gradient_norm"],
+                "train/mean_reward": train_stats["mean_reward"],
+                "train/mean_format_reward": train_stats["mean_format_reward"],
+                "train/mean_answer_reward": train_stats["mean_answer_reward"],
+                "train/mean_token_entropy": train_stats["mean_token_entropy"],
+            }, step=rollout_step)
+        else:
+            # off-policy train loop: (args.rollout_batch_size // args.train_batch_size) times
+            assert args.rollout_batch_size % args.train_batch_size == 0
+            train_step_per_inference = args.rollout_batch_size // args.train_batch_size
+            num_samples_per_train_step = args.train_batch_size * args.group_size
+
+            # get old log probs
+            tokenization_result = tokenize_prompt_and_output(repeated_prompts, rollout_responses, tokenizer, device=model_device)
+            input_ids = tokenization_result["input_ids"]
+            labels = tokenization_result["labels"]
+            get_result = get_response_log_probs(model, input_ids, labels, device=model_device)
+            old_log_probs = get_result["log_probs"]  # (rollout_batch_size * group_size, max_seq_len)
+
+            for train_step in range(train_step_per_inference):
+                index_start = train_step * num_samples_per_train_step
+                index_end = (train_step + 1) * num_samples_per_train_step
+                loss, train_stats = grpo_train_step(
+                    model=model,
+                    tokenizer=tokenizer,
+                    optimizer=optimizer,
+                    gradient_accumulation_steps=args.gradient_accumulation_steps,
+                    max_grad_norm=args.max_grad_norm,
+                    reward_fn=reward_fn,
+                    repeated_prompts=repeated_prompts[index_start: index_end],
+                    rollout_responses=rollout_responses[index_start: index_end],
+                    repeated_ground_truths=repeated_ground_truths[index_start: index_end],
+                    group_size=args.group_size,
+                    baseline=method_config["baseline"],
+                    advantage_eps=method_config["advantage_eps"],
+                    advantage_normalizer=method_config["advantage_normalizer"],
+                    importance_reweighting_method=method_config["importance_reweighting_method"],
+                    old_log_probs=old_log_probs[index_start: index_end],
+                    cliprange=method_config["cliprange"],
+                    loss_normalization=method_config["loss_normalization"],
+                    normalization_constant=None,
+                    pbar=pbar,
+                    device=model_device,
+                )
+                run.log({
+                    "train/loss": loss.item(),
+                    "train/gradient_norm": train_stats["gradient_norm"],
+                    "train/mean_reward": train_stats["mean_reward"],
+                    "train/mean_format_reward": train_stats["mean_format_reward"],
+                    "train/mean_answer_reward": train_stats["mean_answer_reward"],
+                    "train/mean_token_entropy": train_stats["mean_token_entropy"],
+                }, step=rollout_step * train_step_per_inference + train_step)
 
     server.stop()
 
@@ -285,6 +378,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_rollout_steps', type=int, default=200)
     parser.add_argument('--validation_intervals', type=int, default=10)
     parser.add_argument('--rollout_batch_size', type=int, default=256)
+    parser.add_argument('--train_batch_size', type=int, default=8)  # only for off-policy
     parser.add_argument('--group_size', type=int, default=8)
     parser.add_argument('--valid_batch_size', type=int, default=1024)
     parser.add_argument('--gradient_accumulation_steps', type=int, default=16)
