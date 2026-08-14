@@ -302,6 +302,7 @@ def train(args):
                 "train/mean_format_reward": train_stats["mean_format_reward"],
                 "train/mean_answer_reward": train_stats["mean_answer_reward"],
                 "train/mean_token_entropy": train_stats["mean_token_entropy"],
+                "train/clip_fraction": train_stats["clip_fraction"],
             }, step=rollout_step)
         else:
             # off-policy train loop: (args.rollout_batch_size // args.train_batch_size) times
@@ -362,6 +363,7 @@ def train(args):
                     "train/mean_format_reward": train_stats["mean_format_reward"],
                     "train/mean_answer_reward": train_stats["mean_answer_reward"],
                     "train/mean_token_entropy": train_stats["mean_token_entropy"],
+                    "train/clip_fraction": train_stats["clip_fraction"],
                 }, step=rollout_step * train_step_per_inference + train_step)
 
     server.stop()

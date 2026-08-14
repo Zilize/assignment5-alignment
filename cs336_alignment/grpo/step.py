@@ -51,6 +51,7 @@ def grpo_train_step(
     micro_batch_size = len(repeated_prompts) // gradient_accumulation_steps
     total_loss = torch.zeros((1,), device=model.device)
     count_token_entropy, sum_token_entropy = 0, 0.0
+    count_clipped, sum_clipped = 0, 0
     for i in range(0, len(repeated_prompts), micro_batch_size):
         inputs_micro_batch = input_ids[i: i + micro_batch_size]
         labels_micro_batch = labels[i: i + micro_batch_size]
@@ -67,8 +68,15 @@ def grpo_train_step(
         count_token_entropy += masked_token_entropy.numel()
         sum_token_entropy += sum(masked_token_entropy.tolist())
 
-        per_token_loss, _ = compute_policy_gradient_loss(rewards_micro_batch, log_probs, importance_reweighting_method,
-                                                         old_log_probs_micro_batch, cliprange, mask_micro_batch)
+        per_token_loss, loss_metadata = compute_policy_gradient_loss(rewards_micro_batch, log_probs,
+                                                                     importance_reweighting_method,
+                                                                     old_log_probs_micro_batch, cliprange,
+                                                                     mask_micro_batch)
+        if "clipped" in loss_metadata:
+            masked_clipped = loss_metadata["clipped"].masked_select(mask_micro_batch)
+            count_clipped += masked_clipped.numel()
+            sum_clipped += masked_clipped.sum().item()
+
         loss = aggregate_loss_across_microbatch(per_token_loss, mask_micro_batch, loss_normalization,
                                                 normalization_constant)
 
@@ -94,4 +102,5 @@ def grpo_train_step(
         "mean_format_reward": reward_stats["mean_format_reward"],
         "mean_answer_reward": reward_stats["mean_answer_reward"],
         "mean_token_entropy": sum_token_entropy / max(count_token_entropy, 1),
+        "clip_fraction": sum_clipped / max(count_clipped, 1),
     }

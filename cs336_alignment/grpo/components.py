@@ -78,15 +78,17 @@ def compute_policy_gradient_loss(
     elif importance_reweighting_method == "grpo":
         w = torch.exp(policy_log_probs - old_log_probs)
         clipped_w = torch.clip(w, 1 - cliprange, 1 + cliprange)
-        per_token_loss = -torch.min(raw_rewards_or_advantages * w, raw_rewards_or_advantages * clipped_w)
-        return per_token_loss, {}
+        objective, clipped_objective = raw_rewards_or_advantages * w, raw_rewards_or_advantages * clipped_w
+        per_token_loss = -torch.min(objective, clipped_objective)
+        return per_token_loss, {"clipped": clipped_objective < objective}
     elif importance_reweighting_method == "gspo":
         response_length = response_mask.sum(dim=-1, keepdim=True)
         diff = (policy_log_probs - old_log_probs).masked_fill(~response_mask, 0.0)
         s = torch.exp(diff.sum(dim=-1, keepdim=True) / response_length.clamp(min=1)).expand_as(policy_log_probs)
         clipped_s = torch.clip(s, 1 - cliprange, 1 + cliprange)
-        per_token_loss = -torch.min(raw_rewards_or_advantages * s, raw_rewards_or_advantages * clipped_s)
-        return per_token_loss, {}
+        objective, clipped_objective = raw_rewards_or_advantages * s, raw_rewards_or_advantages * clipped_s
+        per_token_loss = -torch.min(objective, clipped_objective)
+        return per_token_loss, {"clipped": clipped_objective < objective}
     else:
         raise NotImplementedError
 
