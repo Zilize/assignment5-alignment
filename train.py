@@ -306,6 +306,7 @@ def train(args):
         else:
             # off-policy train loop: (args.rollout_batch_size // args.train_batch_size) times
             assert args.rollout_batch_size % args.train_batch_size == 0
+            assert args.train_batch_size % args.gradient_accumulation_steps == 0
             train_step_per_inference = args.rollout_batch_size // args.train_batch_size
             num_samples_per_train_step = args.train_batch_size
 
