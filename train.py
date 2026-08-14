@@ -307,14 +307,27 @@ def train(args):
             # off-policy train loop: (args.rollout_batch_size // args.train_batch_size) times
             assert args.rollout_batch_size % args.train_batch_size == 0
             train_step_per_inference = args.rollout_batch_size // args.train_batch_size
-            num_samples_per_train_step = args.train_batch_size * args.group_size
+            num_samples_per_train_step = args.train_batch_size
 
             # get old log probs
-            tokenization_result = tokenize_prompt_and_output(repeated_prompts, rollout_responses, tokenizer, device=model_device)
-            input_ids = tokenization_result["input_ids"]
-            labels = tokenization_result["labels"]
-            get_result = get_response_log_probs(model, input_ids, labels, device=model_device)
-            old_log_probs = get_result["log_probs"]  # (rollout_batch_size * group_size, max_seq_len)
+            # 按 train step 分块 tokenize，保证 padding 长度与 grpo_train_step 内部对同一块的 tokenize 结果一致
+            micro_batch_size = num_samples_per_train_step // args.gradient_accumulation_steps
+            old_log_probs_chunks = []
+            with torch.no_grad():
+                for train_step in range(train_step_per_inference):
+                    index_start = train_step * num_samples_per_train_step
+                    index_end = (train_step + 1) * num_samples_per_train_step
+                    tokenization_result = tokenize_prompt_and_output(repeated_prompts[index_start: index_end],
+                                                                     rollout_responses[index_start: index_end],
+                                                                     tokenizer, device=model_device)
+                    input_ids = tokenization_result["input_ids"]
+                    labels = tokenization_result["labels"]
+                    old_log_probs_chunks.append(torch.cat([
+                        get_response_log_probs(model, input_ids[i: i + micro_batch_size],
+                                               labels[i: i + micro_batch_size],
+                                               device=model_device)["log_probs"]
+                        for i in range(0, num_samples_per_train_step, micro_batch_size)
+                    ], dim=0))  # (num_samples_per_train_step, max_seq_len of this chunk)
 
             for train_step in range(train_step_per_inference):
                 index_start = train_step * num_samples_per_train_step
@@ -334,7 +347,7 @@ def train(args):
                     advantage_eps=method_config["advantage_eps"],
                     advantage_normalizer=method_config["advantage_normalizer"],
                     importance_reweighting_method=method_config["importance_reweighting_method"],
-                    old_log_probs=old_log_probs[index_start: index_end],
+                    old_log_probs=old_log_probs_chunks[train_step],
                     cliprange=method_config["cliprange"],
                     loss_normalization=method_config["loss_normalization"],
                     normalization_constant=None,
